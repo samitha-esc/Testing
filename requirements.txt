@@ -1,0 +1,5 @@
+opencv-python
+numpy
+mido
+python-rtmidi
+flask
