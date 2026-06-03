@@ -1,53 +1,45 @@
-import mido
+import os
 import time
 
-def test_midi():
-    print("--- MIDI Port Test ---")
+def test_midi_alsa():
+    print("--- ALSA MIDI Test ---")
     
-    # List all available MIDI ports
-    out_ports = mido.get_output_names()
-    print("Available MIDI Output Ports:")
-    for i, port in enumerate(out_ports):
-        print(f"  {i}: {port}")
-        
-    # Try to find the Pi's gadget port
-    pi_port = None
-    for port in out_ports:
-        if 'MIDI' in port or 'USB' in port or 'g1' in port or 'Linux' in port:
-            pi_port = port
-            break
-            
-    if not pi_port:
-        print("\n⚠️  Could not automatically find the Pi USB MIDI port.")
-        print("Please look at the list above and type the exact name of the Pi port:")
-        pi_port = input("> ").strip()
-        
-    if not pi_port:
-        print("No port selected. Exiting.")
+    # Find the MIDI device
+    midi_devices = []
+    for device in os.listdir('/dev/snd/'):
+        if 'midi' in device:
+            midi_devices.append(f"/dev/snd/{device}")
+    
+    if not midi_devices:
+        print("❌ No MIDI devices found in /dev/snd/")
         return
-
-    print(f"\n✅ Connecting to: {pi_port}")
+    
+    print(f"Found MIDI devices: {midi_devices}")
+    midi_device = midi_devices[0]
+    
+    print(f"\n✅ Using: {midi_device}")
+    print("Sending MIDI Note: Middle C (C4)")
     
     try:
-        with mido.open_output(pi_port) as outport:
-            print("Sending MIDI Note: Middle C (C4) - Velocity 100")
-            
-            # Send Note On
-            msg_on = mido.Message('note_on', note=60, velocity=100)
-            outport.send(msg_on)
+        # Open the MIDI device
+        with open(midi_device, 'wb') as midi:
+            # MIDI Note On message: 0x90 (Note On), 60 (Middle C), 100 (Velocity)
+            note_on = bytes([0x90, 60, 100])
+            midi.write(note_on)
             print("🎵 Note On sent!")
             
-            time.sleep(0.5) # Hold note for half a second
+            time.sleep(0.5)
             
-            # Send Note Off
-            msg_off = mido.Message('note_off', note=60, velocity=100)
-            outport.send(msg_off)
+            # MIDI Note Off message: 0x80 (Note Off), 60 (Middle C), 0 (Velocity)
+            note_off = bytes([0x80, 60, 0])
+            midi.write(note_off)
             print("🔇 Note Off sent!")
             
-            print("\n✅ MIDI Test Complete!")
-            
+        print("\n✅ MIDI Test Complete!")
+        print("Check your laptop - did you receive the MIDI note?")
+        
     except Exception as e:
-        print(f"❌ Error opening port: {e}")
+        print(f"❌ Error: {e}")
 
 if __name__ == "__main__":
-    test_midi()
+    test_midi_alsa()
