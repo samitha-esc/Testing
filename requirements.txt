@@ -1,5 +1,9 @@
-opencv-python
+# Core dependencies
+opencv-python-headless
+mediapipe
 numpy
 mido
 python-rtmidi
-flask
+
+# Optional: Add this later when we build the web UI
+# flask

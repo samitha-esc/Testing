@@ -1,20 +1,11 @@
-import cv2
+from abc import ABC, abstractmethod
 
-class BaseEngine:
-    """Base class for all gesture tracking engines."""
-    
-    def init(self):
-        """Initialize the engine (load models, set variables)."""
+class BaseEngine(ABC):
+    @abstractmethod
+    def process(self, frame):
+        # Must return a dict: {'x_midi': int, 'y_midi': int} or None
         pass
 
-    def process(self, frame):
-        """
-        Process a frame and return it along with gesture data.
-        Returns:
-            tuple: (processed_frame_for_display, gesture_data_dict)
-        """
-        return frame, {}
-
-    def close(self):
-        """Clean up resources (release models, etc.)."""
+    @abstractmethod
+    def release(self):
         pass
