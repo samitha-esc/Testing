@@ -40,17 +40,21 @@ class GloveCalibrator:
             camera.start()
 
         print("⏳ Detecting hand — keep all three markers in frame...")
-        # Track per-marker samples separately. The loop only finishes when
-        # every marker has enough samples, not just a shared total. This
-        # prevents wrist saturating the count while fingertips are off-screen.
+        print("   You will see colored dots on the camera feed showing")
+        print("   exactly where each marker color is being sampled.")
+
         NEEDED = 20
+        # Dot colors drawn on the preview (BGR): wrist=yellow, thumb=red, index=blue
+        DOT_COLORS = {'wrist': (0, 255, 255), 'thumb': (0, 0, 255), 'index': (255, 0, 0)}
+        MARKER_LM  = {'wrist': 0, 'thumb': 4, 'index': 8}
+
         samples = {'wrist': [], 'thumb': [], 'index': []}
         attempts = 0
-        max_attempts = NEEDED * 80   # bail-out (~53 seconds at 30fps)
+        max_attempts = NEEDED * 80
         last_print = 0.0
+        has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY") or os.name == "nt")
 
         while attempts < max_attempts:
-            # Check if all markers are done.
             counts = {m: len(s) for m, s in samples.items()}
             if all(c >= NEEDED for c in counts.values()):
                 break
@@ -67,43 +71,60 @@ class GloveCalibrator:
             if results.multi_hand_landmarks:
                 h, w, _ = frame_rgb.shape
                 landmarks = results.multi_hand_landmarks[0].landmark
-
                 lm_px = {
-                    'wrist': (int(landmarks[0].x * w), int(landmarks[0].y * h)),
-                    'thumb': (int(landmarks[4].x * w), int(landmarks[4].y * h)),
-                    'index': (int(landmarks[8].x * w), int(landmarks[8].y * h)),
+                    m: (int(landmarks[idx].x * w), int(landmarks[idx].y * h))
+                    for m, idx in MARKER_LM.items()
                 }
 
                 for marker, px in lm_px.items():
-                    # Only sample if the landmark is well inside the frame
-                    # (not near edges where samples would be clipped to nothing).
                     margin = 10
                     if margin < px[0] < w - margin and margin < px[1] < h - margin:
-                        got = self._sample_color(frame_rgb, px)
-                        if got:
-                            samples[marker].extend(got)
+                        if len(samples[marker]) < NEEDED:
+                            got = self._sample_color(frame_rgb, px)
+                            if got:
+                                samples[marker].extend(got)
 
-            # Print progress at most once per second so the terminal is readable.
+                # Show live preview with sample-point dots if display is available.
+                if has_display:
+                    preview = frame_bgr.copy()
+                    counts_now = {m: len(s) for m, s in samples.items()}
+                    for marker, px in lm_px.items():
+                        done = min(counts_now[marker], NEEDED)
+                        filled = done >= NEEDED
+                        radius = 12 if filled else 8
+                        cv2.circle(preview, px, radius, DOT_COLORS[marker], -1 if filled else 2)
+                        cv2.putText(preview, f"{marker} {done}/{NEEDED}",
+                                    (px[0] + 14, px[1]),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                                    DOT_COLORS[marker], 1)
+                    cv2.putText(preview, "CALIBRATING — hold hand open, still",
+                                (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
+                                0.7, (0, 255, 0), 2)
+                    cv2.imshow("Calibration", preview)
+                    cv2.waitKey(1)
+
             now = time.time()
             if now - last_print >= 1.0:
                 counts = {m: len(s) for m, s in samples.items()}
-                parts = [f"{m}: {min(c, NEEDED)}/{NEEDED}" for m, c in counts.items()]
-                missing = [m for m, c in counts.items() if c < NEEDED]
-                hint = f" — move '{', '.join(missing)}' into frame" if missing else ""
+                parts = [f"{m}: {min(len(samples[m]), NEEDED)}/{NEEDED}" for m in samples]
+                missing = [m for m in samples if len(samples[m]) < NEEDED]
+                hint = f" — bring '{', '.join(missing)}' into frame" if missing else ""
                 print(f"  {' | '.join(parts)}{hint}")
                 last_print = now
 
             time.sleep(0.033)
 
+        if has_display:
+            cv2.destroyWindow("Calibration")
+
         if owns_camera:
             camera.release()
 
         counts = {m: len(s) for m, s in samples.items()}
-        missing = [m for m, c in counts.items() if c < NEEDED]
+        missing = [m for m in counts if counts[m] < NEEDED]
         if missing:
             print(f"⚠️  Markers with too few samples: {missing}. "
-                  "Those will use default colors. Re-run calibration with "
-                  "all markers clearly visible.")
+                  "Those will use default colors.")
         else:
             print("✅ All markers sampled. Processing...")
 
@@ -150,11 +171,12 @@ class GloveCalibrator:
         mean_hsv = np.mean(hsv_array, axis=0)
         std_hsv = np.std(hsv_array, axis=0)
         
-        # Create safe ranges (mean ± 2*std, with bounds).
-        # Saturation floor is 100 (not 40) — skin tones have S < 100 under
-        # most lighting, so this prevents calibrated ranges from covering skin.
-        lower = np.clip(mean_hsv - 2 * std_hsv, [0, 100, 60], [179, 255, 255])
-        upper = np.clip(mean_hsv + 2 * std_hsv, [0, 100, 60], [179, 255, 255])
+        # Saturation floor of 60 — low enough to capture tape/nail polish in
+        # varied lighting, high enough to exclude unsaturated backgrounds.
+        # Skin discrimination is now handled at runtime by the ROI-based
+        # tracker (we only search near the fingertip, not the whole arm).
+        lower = np.clip(mean_hsv - 2 * std_hsv, [0, 60, 50], [179, 255, 255])
+        upper = np.clip(mean_hsv + 2 * std_hsv, [0, 60, 50], [179, 255, 255])
         
         return {
             'lower': lower.astype(int).tolist(),
