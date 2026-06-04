@@ -155,33 +155,51 @@ class GloveCalibrator:
         return samples
     
     def _calculate_hsv_ranges(self, rgb_samples: list) -> dict:
-        """Convert RGB samples to HSV and calculate optimal ranges."""
-        # Convert to HSV
+        """Convert RGB samples to HSV and calculate detection ranges."""
         hsv_samples = []
         for rgb in rgb_samples:
-            # Normalize to 0-1
-            rgb_norm = np.array([[rgb / 255.0]], dtype=np.float32)
-            hsv = cv2.cvtColor(rgb_norm, cv2.COLOR_RGB2HSV)[0][0]
-            # Scale to OpenCV ranges (H: 0-179, S: 0-255, V: 0-255)
-            hsv_samples.append([hsv[0] * 179, hsv[1] * 255, hsv[2] * 255])
-        
+            # Use uint8 input, NOT float. Float input makes cv2 return H in
+            # [0,360]; uint8 returns H in [0,179]. The original code used float
+            # then multiplied by 179, giving e.g. yellow H=60 → 60*179=10740
+            # which clips to 179 — every color ended up as H=179 (magenta).
+            rgb_px = np.uint8([[rgb]])
+            hsv = cv2.cvtColor(rgb_px, cv2.COLOR_RGB2HSV)[0][0]
+            hsv_samples.append(hsv.astype(float))
+
         hsv_array = np.array(hsv_samples)
-        
-        # Calculate mean and std dev
-        mean_hsv = np.mean(hsv_array, axis=0)
-        std_hsv = np.std(hsv_array, axis=0)
-        
-        # Saturation floor of 60 — low enough to capture tape/nail polish in
-        # varied lighting, high enough to exclude unsaturated backgrounds.
-        # Skin discrimination is now handled at runtime by the ROI-based
-        # tracker (we only search near the fingertip, not the whole arm).
-        lower = np.clip(mean_hsv - 2 * std_hsv, [0, 60, 50], [179, 255, 255])
-        upper = np.clip(mean_hsv + 2 * std_hsv, [0, 60, 50], [179, 255, 255])
-        
+        mean_hsv  = np.mean(hsv_array, axis=0)
+        std_hsv   = np.std(hsv_array,  axis=0)
+
+        # Hue: mean ± 3σ (wider coverage; ROI constrains position anyway).
+        # Saturation lower: floor at 50 to exclude washed-out/gray pixels.
+        # Saturation upper: always 255 — accept any saturation above the floor
+        #   so highly saturated tape is never excluded by an upper S clip.
+        # Value: floor at 40, upper 255.
+        h_lo = float(np.clip(mean_hsv[0] - 3 * std_hsv[0], 0, 179))
+        h_hi = float(np.clip(mean_hsv[0] + 3 * std_hsv[0], 0, 179))
+        s_lo = float(np.clip(mean_hsv[1] - 3 * std_hsv[1], 50, 255))
+        v_lo = float(np.clip(mean_hsv[2] - 3 * std_hsv[2], 40, 255))
+
+        lower = [int(h_lo), int(s_lo), int(v_lo)]
+        upper = [int(h_hi), 255, 255]
+
+        # Human-readable diagnostic so you can verify calibration makes sense.
+        h, s, v = mean_hsv
+        if   s < 50:        colour = "gray/white"
+        elif h < 10 or h > 170: colour = "red"
+        elif h < 25:        colour = "orange"
+        elif h < 35:        colour = "yellow"
+        elif h < 85:        colour = "green"
+        elif h < 130:       colour = "blue"
+        elif h < 155:       colour = "purple"
+        else:               colour = "pink/red"
+        print(f"    mean HSV: H={h:.0f} S={s:.0f} V={v:.0f}  → {colour}")
+        print(f"    range:    H=[{lower[0]}-{upper[0]}]  S=[{lower[1]}-255]  V=[{lower[2]}-255]")
+
         return {
-            'lower': lower.astype(int).tolist(),
-            'upper': upper.astype(int).tolist(),
-            'mean': mean_hsv.astype(int).tolist()
+            'lower': lower,
+            'upper': upper,
+            'mean':  [int(h), int(s), int(v)],
         }
     
     def save_calibration(self, colors: dict, filepath: str = "config/glove_colors.json"):
