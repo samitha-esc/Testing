@@ -77,7 +77,7 @@ def main():
         cam.release()
         engine.release()
         midi.disconnect()
-        cv2.destroyAllWindows()
+        # cv2.destroyAllWindows() (not there in headless openCV)
 
 if __name__ == "__main__":
     main()
