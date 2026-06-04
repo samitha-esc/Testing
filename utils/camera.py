@@ -67,10 +67,17 @@ class Camera:
         print(f" Opening camera {self._width}x{self._height} @ {self._fps}fps...")
         self._cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
 
-        # CRITICAL: Force MJPEG format (prevents libcamera issues)
-        mjpeg_fourcc = cv2.VideoWriter_fourcc('M', 'J', 'P', 'G')
-        self._cap.set(cv2.CAP_PROP_FOURCC, mjpeg_fourcc)
-        
+        # CRITICAL: Use RGB3 (RGB888), not MJPEG or YUYV. The CSI camera is
+        # accessed through libcamera (run the app via `libcamerify`), which
+        # presents a V4L2 device. Empirically on this Pi (ov5647 + Trixie):
+        #   - MJPEG -> reshape error in read()
+        #   - YUYV  -> opens & reads but decodes to a green, stride-sheared
+        #             garbage image
+        #   - RGB3  -> clean, correct frame (verified by eye)
+        # OpenCV returns it as a standard (H, W, 3) BGR frame.
+        rgb3_fourcc = cv2.VideoWriter_fourcc('R', 'G', 'B', '3')
+        self._cap.set(cv2.CAP_PROP_FOURCC, rgb3_fourcc)
+
         # Force single-frame buffer (eliminates lag)
         self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._width)

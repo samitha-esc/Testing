@@ -3,8 +3,9 @@ import numpy as np
 import mediapipe as mp
 import json
 import os
-from picamera2 import Picamera2
 import time
+
+from utils.camera import Camera
 
 class GloveCalibrator:
     def __init__(self):
@@ -15,40 +16,52 @@ class GloveCalibrator:
             min_detection_confidence=0.7,
             min_tracking_confidence=0.7
         )
-        self.picam2 = Picamera2()
-        
-    def calibrate(self) -> dict:
+
+    def calibrate(self, camera: Camera = None) -> dict:
         """
         Run auto-calibration. Returns dict with HSV ranges for each marker.
+
+        Uses the same cv2.VideoCapture (V4L2) source as the runtime engine
+        so calibrated HSV values match what the tracker actually sees.
+
+        If `camera` is provided (already started), it is reused — important
+        for the in-app 'r' recalibration, since /dev/video0 cannot be opened
+        twice. If None, a temporary camera is opened and released here.
         """
         print("📍 CALIBRATION MODE")
         print("1. Put on your glove with colored markers")
         print("2. Hold your hand OPEN, palm facing camera")
         print("3. Keep still for 3 seconds...")
         time.sleep(3)
-        
-        # Start camera
-        config = self.picam2.create_video_configuration(
-            main={"size": (640, 480), "format": "RGB888"}
-        )
-        self.picam2.configure(config)
-        self.picam2.start()
-        
+
+        owns_camera = camera is None
+        if owns_camera:
+            camera = Camera(device_id=0, width=640, height=480)
+            camera.start()
+
         print("⏳ Detecting hand...")
         samples = {
             'wrist': [],
             'thumb': [],
             'index': []
         }
-        
-        start_time = time.time()
+
         sample_count = 0
         max_samples = 30
-        
-        while sample_count < max_samples:
-            frame_rgb = self.picam2.capture_array()
+        attempts = 0
+        max_attempts = max_samples * 20  # ~bail-out so we never spin forever
+
+        while sample_count < max_samples and attempts < max_attempts:
+            attempts += 1
+            ret, frame_bgr = camera.get_frame()
+            if not ret or frame_bgr is None:
+                time.sleep(0.01)
+                continue
+
+            # MediaPipe + color sampling both expect RGB.
+            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
             results = self.hands.process(frame_rgb)
-            
+
             if results.multi_hand_landmarks:
                 for hand_landmarks in results.multi_hand_landmarks:
                     # Extract key points
@@ -56,29 +69,33 @@ class GloveCalibrator:
                     wrist = landmarks[0]
                     thumb_tip = landmarks[4]
                     index_tip = landmarks[8]
-                    
+
                     # Convert to pixel coordinates
                     h, w, _ = frame_rgb.shape
                     wrist_px = (int(wrist.x * w), int(wrist.y * h))
                     thumb_px = (int(thumb_tip.x * w), int(thumb_tip.y * h))
                     index_px = (int(index_tip.x * w), int(index_tip.y * h))
-                    
+
                     # Sample colors at these locations (3x3 area)
                     samples['wrist'].extend(self._sample_color(frame_rgb, wrist_px))
                     samples['thumb'].extend(self._sample_color(frame_rgb, thumb_px))
                     samples['index'].extend(self._sample_color(frame_rgb, index_px))
-                    
+
                     sample_count += 1
-                    
+
                     # Progress indicator
                     if sample_count % 5 == 0:
                         print(f"  Sampling... {sample_count}/{max_samples}")
-            
+
             time.sleep(0.033)  # ~30fps
-        
-        self.picam2.stop()
-        self.hands.close()
-        
+
+        if owns_camera:
+            camera.release()
+
+        if sample_count == 0:
+            print("❌ No hand detected during calibration. "
+                  "Check lighting and that your hand is in frame.")
+
         print("✅ Calibration complete! Processing samples...")
         
         # Calculate HSV ranges
@@ -156,3 +173,10 @@ class GloveCalibrator:
         else:
             print("⚠️ No calibration file found. Run calibration first.")
             return None
+
+    def release(self):
+        """Close the MediaPipe Hands graph. Call once at shutdown."""
+        try:
+            self.hands.close()
+        except Exception:
+            pass

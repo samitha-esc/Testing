@@ -39,19 +39,24 @@ def main():
     if headless:
         print("🖥️  Headless mode: printing gesture values to console.")
 
-    # 1. CALIBRATION CHECK
+    # 1. Open the camera ONCE — reused for calibration and tracking
+    #    (/dev/video0 cannot be opened twice concurrently).
+    cam = Camera(device_id=0, width=640, height=480)
+    cam.start()
+
+    # 2. CALIBRATION CHECK
     calibrator = GloveCalibrator()
     calibrated_colors = calibrator.load_calibration()
 
     if calibrated_colors is None:
         print("\n⚠️  No calibration found! Starting calibration...")
-        calibrated_colors = calibrator.calibrate()
+        calibrated_colors = calibrator.calibrate(camera=cam)
         calibrator.save_calibration(calibrated_colors)
         print("✅ Calibration saved. Starting tracking...\n")
     else:
         print("✅ Using existing calibration from config/glove_colors.json\n")
 
-    # 2. Initialize MIDI
+    # 3. Initialize MIDI
     midi = None
     mapping_engine = None
     mode_manager = ModeManager()
@@ -62,12 +67,11 @@ def main():
         midi = MidiMapper()
         if not midi.connect():
             print("❌ MIDI unavailable. Re-run with --no-midi to track only.")
+            cam.release()
             sys.exit(1)
         mapping_engine = MappingEngine(midi, mode_manager)
 
-    # 3. Camera + engine
-    cam = Camera(device_id=0, width=640, height=480)
-    cam.start()
+    # 4. Engine
     engine = GloveEngine(calibrated_colors=calibrated_colors)
 
     print(f" Starting in {mode_manager.current_mode} MODE")
@@ -120,7 +124,7 @@ def main():
                     mode_manager.handle_ui_switch("DJ")
                 elif key == ord('r'):
                     print("\n🔄 Starting recalibration...")
-                    new_colors = calibrator.calibrate()
+                    new_colors = calibrator.calibrate(camera=cam)
                     calibrator.save_calibration(new_colors)
                     engine.update_colors(new_colors)
                     print("✅ Recalibration complete!\n")
@@ -134,6 +138,7 @@ def main():
     finally:
         cam.release()
         engine.release()
+        calibrator.release()
         if midi is not None:
             midi.disconnect()
         if not headless:
