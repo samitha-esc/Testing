@@ -26,7 +26,7 @@ def main():
     
     # 3. Initialize Camera
     # Note: 640x480 is good for glove tracking, but 320x240 is faster if needed
-    cam = Camera(width=640, height=480)
+    cam = Camera(device_id=0, width=640, height=480)
     cam.start()
     
     # 4. Choose your Engine

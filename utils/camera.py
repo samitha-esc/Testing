@@ -1,43 +1,29 @@
-from picamera2 import Picamera2
 import cv2
-import time
 
 class Camera:
-    def __init__(self, width=640, height=480, fps=30):
-        # Initialize the official Pi Camera library
-        self.picam2 = Picamera2()
+    def __init__(self, device_id=0, width=640, height=480, fps=30):
+        # Force V4L2 backend. libcamerify will intercept this and route it to the Pi Camera.
+        self.cap = cv2.VideoCapture(device_id, cv2.CAP_V4L2)
         
-        # Create a video configuration
-        # We ask for RGB888 format because it's the fastest for the Pi's GPU
-        config = self.picam2.create_video_configuration(
-            main={"size": (width, height), "format": "RGB888"},
-            controls={"FrameDurationLimits": (int(1000000/fps), int(1000000/fps))}
-        )
+        # Standard settings
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        self.cap.set(cv2.CAP_PROP_FPS, fps)
         
-        self.picam2.configure(config)
-        self.width = width
-        self.height = height
-        self.fps = fps
+        # Lock exposure so the camera doesn't adjust brightness when you move your glove
+        self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25) # 0.25 turns off auto-exposure
+        self.cap.set(cv2.CAP_PROP_EXPOSURE, -7)        # Manual exposure level
 
     def start(self):
-        """Starts the camera stream."""
-        self.picam2.start()
-        # Give the camera a second to auto-expose and stabilize
-        print("Warming up Pi Camera...")
-        time.sleep(1.5) 
-        print("✅ Pi Camera started via libcamera.")
+        if not self.cap.isOpened():
+            raise IOError("Cannot open camera.")
+        print("✅ Camera started.")
 
     def get_frame(self):
-        """Captures a frame and converts it to OpenCV BGR format."""
-        # capture_array() returns a NumPy array directly! No V4L2 needed.
-        frame_rgb = self.picam2.capture_array()
-        
-        # OpenCV and our color engines expect BGR, so we convert it here
-        frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
-        
-        return True, frame_bgr
+        return self.cap.read()
 
     def release(self):
-        """Stops the camera safely."""
-        self.picam2.stop()
-        print("📷 Camera released.")
+        if self.cap.isOpened():
+            self.cap.release()
+            print("📷 Camera released.")

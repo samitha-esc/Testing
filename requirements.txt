@@ -5,4 +5,6 @@ mido
 python-rtmidi
 
 # Note: picamera2 is pre-installed on Raspberry Pi OS. 
-# If running on a normal PC, you would use opencv-python instead.
+
+# TODO: Install MediaPipe separately later for the hybrid approach
+# mediapipe
