@@ -177,8 +177,8 @@ class GloveCalibrator:
         # Value: floor at 40, upper 255.
         h_lo = float(np.clip(mean_hsv[0] - 3 * std_hsv[0], 0, 179))
         h_hi = float(np.clip(mean_hsv[0] + 3 * std_hsv[0], 0, 179))
-        s_lo = float(np.clip(mean_hsv[1] - 3 * std_hsv[1], 50, 255))
-        v_lo = float(np.clip(mean_hsv[2] - 3 * std_hsv[2], 40, 255))
+        s_lo = float(np.clip(mean_hsv[1] - 3 * std_hsv[1], 30, 255))
+        v_lo = float(np.clip(mean_hsv[2] - 5 * std_hsv[2], 20, 255))
 
         lower = [int(h_lo), int(s_lo), int(v_lo)]
         upper = [int(h_hi), 255, 255]
