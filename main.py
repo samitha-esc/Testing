@@ -41,6 +41,10 @@ def main():
     try:
         while True:
             ret, frame = cam.get_frame()
+            if not ret or frame is None:
+                print("⚠️ Failed to grab frame")
+                time.sleep(0.1)  # Small delay before retry
+                continue
             if not ret:
                 print("️ Failed to grab frame")
                 break
