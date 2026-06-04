@@ -6,59 +6,56 @@ from utils.camera import Camera
 from utils.mode_manager import ModeManager
 from utils.midi_mapper import MidiMapper
 from utils.mapping_engine import MappingEngine
+from utils.calibration import GloveCalibrator
 
-# Import the engines
 from engines.engine_glove import GloveEngine
-# from engines.engine_medipipe import MediapipeEngine
-# from engines.engine_color_modes import ColorModesEngine
 
 def main():
-    print(" Initializing Gesture MIDI Controller v3.0 (Glove Mode)...")
+    print("🚀 Initializing Gesture MIDI Controller v4.0 (Auto-Calibrating)...")
     
-    # 1. Initialize MIDI
+    # 1. CALIBRATION CHECK
+    calibrator = GloveCalibrator()
+    calibrated_colors = calibrator.load_calibration()
+    
+    if calibrated_colors is None:
+        print("\n⚠️  No calibration found! Starting calibration...")
+        calibrated_colors = calibrator.calibrate()
+        calibrator.save_calibration(calibrated_colors)
+        print("✅ Calibration saved. Starting tracking...\n")
+    else:
+        print("✅ Using existing calibration from config/glove_colors.json\n")
+    
+    # 2. Initialize MIDI
     midi = MidiMapper()
     if not midi.connect():
         sys.exit(1)
         
-    # 2. Initialize Mode Manager and Mapping Engine
     mode_manager = ModeManager()
     mapping_engine = MappingEngine(midi, mode_manager)
     
-    # 3. Initialize Camera
-    # Note: 640x480 is good for glove tracking, but 320x240 is faster if needed
     cam = Camera(device_id=0, width=640, height=480)
     cam.start()
     
-    # 4. Choose your Engine
-    # Currently using the 3-Marker Glove for low latency
-    engine = GloveEngine()
+    engine = GloveEngine(calibrated_colors=calibrated_colors)
     
     print(f" Starting in {mode_manager.current_mode} MODE")
-    print("🧤 Glove Engine Active: Yellow (Wrist), Red (Thumb), Blue (Index)")
-    print("⌨️ Press '1' for PLAY mode, '2' for EXPRESSION, '3' for DJ mode")
-    print("⌨️ Press 'q' to quit")
+    print("🧤 Glove Engine Active (Auto-Calibrated)")
+    print("⌨️ Press '1' for PLAY, '2' for EXPRESSION, '3' for DJ")
+    print("⌨️ Press 'r' to recalibrate colors, 'q' to quit")
     
     try:
         while True:
             ret, frame = cam.get_frame()
             if not ret or frame is None:
                 print("⚠️ Failed to grab frame")
-                time.sleep(0.1)  # Small delay before retry
+                time.sleep(0.1)
                 continue
-            if not ret:
-                print("️ Failed to grab frame")
-                break
             
-            # Process frame through the chosen engine
-            # GloveEngine.process() returns only the gestures dictionary
             gestures = engine.process(frame)
             
-            # Map gestures to MIDI
             if gestures:
                 mapping_engine.process_gestures(gestures)
             
-            # Keyboard shortcuts for mode switching
-            # (Crucial since the glove can't easily do the 'OK sign' gesture)
             key = cv2.waitKey(1) & 0xFF
             if key == ord('1'):
                 mode_manager.handle_ui_switch("PLAY")
@@ -66,14 +63,16 @@ def main():
                 mode_manager.handle_ui_switch("EXPRESSION")
             elif key == ord('3'):
                 mode_manager.handle_ui_switch("DJ")
+            elif key == ord('r'):
+                print("\n🔄 Starting recalibration...")
+                new_colors = calibrator.calibrate()
+                calibrator.save_calibration(new_colors)
+                engine.update_colors(new_colors)
+                print("✅ Recalibration complete!\n")
             elif key == ord('q'):
                 break
             
-            # Update mode manager cooldowns
             mode_manager.tick()
-            
-            # Optional: Show debug window (if you have monitor connected)
-            # cv2.imshow('Gesture Control', frame)
             
     except KeyboardInterrupt:
         print("\n🛑 Shutting down...")
@@ -81,7 +80,6 @@ def main():
         cam.release()
         engine.release()
         midi.disconnect()
-        # cv2.destroyAllWindows() (not there in headless openCV)
 
 if __name__ == "__main__":
     main()
