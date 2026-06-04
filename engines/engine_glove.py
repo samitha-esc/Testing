@@ -79,8 +79,10 @@ class GloveEngine(BaseEngine):
         hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
 
         wrist = self._get_centroid(hsv, self.colors['wrist'], min_area=120)
-        thumb = self._get_centroid(hsv, self.colors['thumb'], min_area=40)
-        index = self._get_centroid(hsv, self.colors['index'], min_area=40)
+        # Fingertip markers are small (nail-sized). max_area excludes large
+        # skin blobs that happen to fall in the same hue range.
+        thumb = self._get_centroid(hsv, self.colors['thumb'], min_area=30, max_area=900)
+        index = self._get_centroid(hsv, self.colors['index'], min_area=30, max_area=900)
 
         gestures = {
             '_markers': {
@@ -160,8 +162,14 @@ class GloveEngine(BaseEngine):
     # ------------------------------------------------------------------ #
     # Helpers
     # ------------------------------------------------------------------ #
-    def _get_centroid(self, hsv, color_range, min_area):
-        """Return (cx, cy) normalized to 0..1, or None. Handles red hue wrap."""
+    def _get_centroid(self, hsv, color_range, min_area, max_area=None):
+        """Return (cx, cy) normalized to 0..1, or None. Handles red hue wrap.
+
+        When max_area is set (fingertip markers), candidates are filtered to
+        that size window and then ranked by compactness (circularity). Nail
+        polish / tape is roughly circular; a patch of skin on an arm is
+        elongated and scores low, so it gets ignored even if it's the same hue.
+        """
         lower, upper = color_range
         if lower[0] > upper[0]:
             # Hue wraps past 179 (red): OR the two sub-ranges.
@@ -181,10 +189,26 @@ class GloveEngine(BaseEngine):
                                        cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             return None
-        c = max(contours, key=cv2.contourArea)
-        if cv2.contourArea(c) < min_area:
+
+        # Filter candidates by area bounds.
+        candidates = [c for c in contours
+                      if cv2.contourArea(c) >= min_area
+                      and (max_area is None or cv2.contourArea(c) <= max_area)]
+        if not candidates:
             return None
-        M = cv2.moments(c)
+
+        if max_area is not None:
+            # Pick the most compact (circular) blob. Compactness = 4π·A/P².
+            # A perfect circle scores 1.0; an elongated skin patch scores <<1.
+            def compactness(c):
+                a = cv2.contourArea(c)
+                p = cv2.arcLength(c, True)
+                return (4 * math.pi * a / (p * p)) if p > 0 else 0
+            best = max(candidates, key=compactness)
+        else:
+            best = max(candidates, key=cv2.contourArea)
+
+        M = cv2.moments(best)
         if M["m00"] == 0:
             return None
         cx = (M["m10"] / M["m00"]) / self.PROC_W

@@ -39,62 +39,73 @@ class GloveCalibrator:
             camera = Camera(device_id=0, width=640, height=480)
             camera.start()
 
-        print("⏳ Detecting hand...")
-        samples = {
-            'wrist': [],
-            'thumb': [],
-            'index': []
-        }
-
-        sample_count = 0
-        max_samples = 30
+        print("⏳ Detecting hand — keep all three markers in frame...")
+        # Track per-marker samples separately. The loop only finishes when
+        # every marker has enough samples, not just a shared total. This
+        # prevents wrist saturating the count while fingertips are off-screen.
+        NEEDED = 20
+        samples = {'wrist': [], 'thumb': [], 'index': []}
         attempts = 0
-        max_attempts = max_samples * 20  # ~bail-out so we never spin forever
+        max_attempts = NEEDED * 80   # bail-out (~53 seconds at 30fps)
+        last_print = 0.0
 
-        while sample_count < max_samples and attempts < max_attempts:
+        while attempts < max_attempts:
+            # Check if all markers are done.
+            counts = {m: len(s) for m, s in samples.items()}
+            if all(c >= NEEDED for c in counts.values()):
+                break
+
             attempts += 1
             ret, frame_bgr = camera.get_frame()
             if not ret or frame_bgr is None:
                 time.sleep(0.01)
                 continue
 
-            # MediaPipe + color sampling both expect RGB.
             frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
             results = self.hands.process(frame_rgb)
 
             if results.multi_hand_landmarks:
-                for hand_landmarks in results.multi_hand_landmarks:
-                    # Extract key points
-                    landmarks = hand_landmarks.landmark
-                    wrist = landmarks[0]
-                    thumb_tip = landmarks[4]
-                    index_tip = landmarks[8]
+                h, w, _ = frame_rgb.shape
+                landmarks = results.multi_hand_landmarks[0].landmark
 
-                    # Convert to pixel coordinates
-                    h, w, _ = frame_rgb.shape
-                    wrist_px = (int(wrist.x * w), int(wrist.y * h))
-                    thumb_px = (int(thumb_tip.x * w), int(thumb_tip.y * h))
-                    index_px = (int(index_tip.x * w), int(index_tip.y * h))
+                lm_px = {
+                    'wrist': (int(landmarks[0].x * w), int(landmarks[0].y * h)),
+                    'thumb': (int(landmarks[4].x * w), int(landmarks[4].y * h)),
+                    'index': (int(landmarks[8].x * w), int(landmarks[8].y * h)),
+                }
 
-                    # Sample colors at these locations (3x3 area)
-                    samples['wrist'].extend(self._sample_color(frame_rgb, wrist_px))
-                    samples['thumb'].extend(self._sample_color(frame_rgb, thumb_px))
-                    samples['index'].extend(self._sample_color(frame_rgb, index_px))
+                for marker, px in lm_px.items():
+                    # Only sample if the landmark is well inside the frame
+                    # (not near edges where samples would be clipped to nothing).
+                    margin = 10
+                    if margin < px[0] < w - margin and margin < px[1] < h - margin:
+                        got = self._sample_color(frame_rgb, px)
+                        if got:
+                            samples[marker].extend(got)
 
-                    sample_count += 1
+            # Print progress at most once per second so the terminal is readable.
+            now = time.time()
+            if now - last_print >= 1.0:
+                counts = {m: len(s) for m, s in samples.items()}
+                parts = [f"{m}: {min(c, NEEDED)}/{NEEDED}" for m, c in counts.items()]
+                missing = [m for m, c in counts.items() if c < NEEDED]
+                hint = f" — move '{', '.join(missing)}' into frame" if missing else ""
+                print(f"  {' | '.join(parts)}{hint}")
+                last_print = now
 
-                    # Progress indicator
-                    if sample_count % 5 == 0:
-                        print(f"  Sampling... {sample_count}/{max_samples}")
-
-            time.sleep(0.033)  # ~30fps
+            time.sleep(0.033)
 
         if owns_camera:
             camera.release()
 
-        if sample_count == 0:
-            print("❌ No hand detected during calibration. "
-                  "Check lighting and that your hand is in frame.")
+        counts = {m: len(s) for m, s in samples.items()}
+        missing = [m for m, c in counts.items() if c < NEEDED]
+        if missing:
+            print(f"⚠️  Markers with too few samples: {missing}. "
+                  "Those will use default colors. Re-run calibration with "
+                  "all markers clearly visible.")
+        else:
+            print("✅ All markers sampled. Processing...")
 
         print("✅ Calibration complete! Processing samples...")
         
@@ -139,9 +150,11 @@ class GloveCalibrator:
         mean_hsv = np.mean(hsv_array, axis=0)
         std_hsv = np.std(hsv_array, axis=0)
         
-        # Create safe ranges (mean ± 2*std, with bounds)
-        lower = np.clip(mean_hsv - 2 * std_hsv, [0, 40, 40], [179, 255, 255])
-        upper = np.clip(mean_hsv + 2 * std_hsv, [0, 40, 40], [179, 255, 255])
+        # Create safe ranges (mean ± 2*std, with bounds).
+        # Saturation floor is 100 (not 40) — skin tones have S < 100 under
+        # most lighting, so this prevents calibrated ranges from covering skin.
+        lower = np.clip(mean_hsv - 2 * std_hsv, [0, 100, 60], [179, 255, 255])
+        upper = np.clip(mean_hsv + 2 * std_hsv, [0, 100, 60], [179, 255, 255])
         
         return {
             'lower': lower.astype(int).tolist(),
