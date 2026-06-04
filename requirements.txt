@@ -1,9 +1,8 @@
 # Core dependencies
 opencv-python-headless
-mediapipe
 numpy
 mido
 python-rtmidi
 
-# Optional: Add this later when we build the web UI
-# flask
+# Note: picamera2 is pre-installed on Raspberry Pi OS. 
+# If running on a normal PC, you would use opencv-python instead.
