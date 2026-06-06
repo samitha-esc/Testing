@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gesture MIDI Controller</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>🧤 Gesture MIDI Controller</h1>
+    <div class="header-right">
+      <span id="midi-status" class="pill pill-off">MIDI: …</span>
+      <span id="conn-status" class="pill pill-off">● offline</span>
+      <span id="fps" class="pill">– fps</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- LEFT: camera + mode -->
+    <section class="panel camera-panel">
+      <div class="mode-switch" id="mode-switch">
+        <button data-mode="PLAY" class="mode-btn">PLAY</button>
+        <button data-mode="EXPRESSION" class="mode-btn">EXPRESSION</button>
+        <button data-mode="DJ" class="mode-btn">DJ</button>
+      </div>
+
+      <div class="video-wrap">
+        <img id="stream" src="/stream.mjpg" alt="camera feed">
+        <div id="oob-alert" class="oob-alert hidden">⚠ HAND OUT OF BOUNDS</div>
+        <div id="calibrating" class="calibrating hidden">Calibrating… hold hand open &amp; still</div>
+      </div>
+
+      <div class="marker-row" id="marker-row">
+        <span class="marker" data-m="wrist"><i></i> wrist</span>
+        <span class="marker" data-m="thumb"><i></i> thumb</span>
+        <span class="marker" data-m="index"><i></i> index</span>
+        <span class="hand-state" id="hand-state">—</span>
+      </div>
+
+      <div class="actions">
+        <button id="recalibrate-btn" class="ghost-btn">↻ Recalibrate colors</button>
+      </div>
+    </section>
+
+    <!-- RIGHT: live controls -->
+    <section class="panel controls-panel">
+      <h2>Active Controls <small id="active-mode">PLAY</small></h2>
+      <div id="controls"></div>
+    </section>
+  </main>
+
+  <!-- Mapping editor -->
+  <section class="panel mapping-panel">
+    <div class="mapping-header">
+      <h2>MIDI Mapping</h2>
+      <div>
+        <button id="mapping-reload" class="ghost-btn">Reload</button>
+        <button id="mapping-save" class="primary-btn">Save &amp; Apply</button>
+      </div>
+    </div>
+    <p class="hint">Edit which gesture drives which MIDI CC. Changes apply on the Pi instantly — no restart.</p>
+    <div id="mapping-editor"></div>
+    <div id="mapping-status" class="mapping-status"></div>
+  </section>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,51 @@
+{
+  "PLAY": [
+    {
+      "id": "transport",
+      "label": "Play / Stop",
+      "type": "trigger",
+      "cc": 64,
+      "channel": 1,
+      "on_gesture": "OPEN_PALM",
+      "off_gesture": "FIST",
+      "on_value": 127,
+      "off_value": 0
+    }
+  ],
+  "EXPRESSION": [
+    {
+      "id": "filter",
+      "label": "Filter Cutoff",
+      "type": "absolute",
+      "source": "PINCH",
+      "cc": 74,
+      "channel": 1
+    },
+    {
+      "id": "expression",
+      "label": "Expression",
+      "type": "absolute",
+      "source": "HAND_Y",
+      "cc": 11,
+      "channel": 1
+    }
+  ],
+  "DJ": [
+    {
+      "id": "crossfader",
+      "label": "Crossfader",
+      "type": "relative",
+      "source": "HAND_DELTA_X",
+      "cc": 7,
+      "channel": 1
+    },
+    {
+      "id": "scratch",
+      "label": "Scratch",
+      "type": "relative",
+      "source": "INDEX_DELTA_Y",
+      "cc": 56,
+      "channel": 1
+    }
+  ]
+}

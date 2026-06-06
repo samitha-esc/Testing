@@ -41,6 +41,16 @@ class MidiMapper:
             print(f"❌ MIDI Error opening '{target}': {e}")
             return False
 
+    def send_cc(self, cc, value, channel=0):
+        """Send a raw CC (value 0..127, channel 0..15)."""
+        if not self.port:
+            return
+        cc = max(0, min(127, int(cc)))
+        value = max(0, min(127, int(value)))
+        channel = max(0, min(15, int(channel)))
+        self.port.send(mido.Message('control_change', control=cc,
+                                    value=value, channel=channel))
+
     def send_absolute(self, cc, normalized_value):
         if not self.port:
             return

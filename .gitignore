@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+venv/
+venv311/
+.venv/
+
+# Per-device calibration (generated on the Pi for its own lighting/glove)
+config/glove_colors.json

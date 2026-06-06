@@ -14,7 +14,6 @@ from engines.engine_glove import GloveEngine
 
 
 def _has_display():
-    """True if a GUI window can plausibly be shown (X / Wayland present)."""
     if os.name == "nt":
         return True
     return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
@@ -22,10 +21,13 @@ def _has_display():
 
 def main():
     parser = argparse.ArgumentParser(description="Gesture MIDI Controller")
+    parser.add_argument("--web", action="store_true",
+                        help="Serve the browser UI (camera, live controls, "
+                             "mode switch, mapping editor) over the network.")
+    parser.add_argument("--port", type=int, default=8080,
+                        help="Web UI port (default 8080).")
     parser.add_argument("--headless", action="store_true",
-                        help="No GUI window; print gesture values to console "
-                             "(use for SSH). Mode via console is fixed unless "
-                             "set with --mode.")
+                        help="No GUI window; print gesture values to console.")
     parser.add_argument("--mode", default=None,
                         choices=["PLAY", "EXPRESSION", "DJ"],
                         help="Start in this mode.")
@@ -33,32 +35,27 @@ def main():
                         help="Skip MIDI (track + visualize only).")
     args = parser.parse_args()
 
-    headless = args.headless or not _has_display()
+    # In --web mode the browser is the display; never open a local cv2 window.
+    headless = args.web or args.headless or not _has_display()
 
-    print("🚀 Initializing Gesture MIDI Controller v4.0 (Auto-Calibrating)...")
-    if headless:
-        print("🖥️  Headless mode: printing gesture values to console.")
+    print("🚀 Initializing Gesture MIDI Controller v5.0...")
 
-    # 1. Open the camera ONCE — reused for calibration and tracking
-    #    (/dev/video0 cannot be opened twice concurrently).
+    # 1. Camera once (reused for calibration + tracking).
     cam = Camera(device_id=0, width=640, height=480)
     cam.start()
 
-    # 2. CALIBRATION CHECK
+    # 2. Calibration.
     calibrator = GloveCalibrator()
     calibrated_colors = calibrator.load_calibration()
-
     if calibrated_colors is None:
         print("\n⚠️  No calibration found! Starting calibration...")
         calibrated_colors = calibrator.calibrate(camera=cam)
         calibrator.save_calibration(calibrated_colors)
-        print("✅ Calibration saved. Starting tracking...\n")
     else:
-        print("✅ Using existing calibration from config/glove_colors.json\n")
+        print("✅ Using existing calibration.\n")
 
-    # 3. Initialize MIDI
+    # 3. MIDI (optional) — mapping engine exists either way so the UI works.
     midi = None
-    mapping_engine = None
     mode_manager = ModeManager()
     if args.mode:
         mode_manager.handle_ui_switch(args.mode)
@@ -66,55 +63,86 @@ def main():
     if not args.no_midi:
         midi = MidiMapper()
         if not midi.connect():
-            print("❌ MIDI unavailable. Re-run with --no-midi to track only.")
-            cam.release()
-            sys.exit(1)
-        mapping_engine = MappingEngine(midi, mode_manager)
+            print("⚠️  MIDI unavailable — continuing in track-only mode.")
+            midi = None
 
-    # 4. Engine
+    mapping_engine = MappingEngine(midi, mode_manager)
     engine = GloveEngine(calibrated_colors=calibrated_colors)
 
-    print(f" Starting in {mode_manager.current_mode} MODE")
-    print("🧤 Glove Engine Active (Auto-Calibrated)")
-    if headless:
-        print("⌨️ Ctrl+C to quit. Use --mode to choose mode in headless.")
-    else:
-        print("⌨️ '1' PLAY, '2' EXPRESSION, '3' DJ | 'r' recalibrate | 'q' quit")
+    # 4. Web server (optional).
+    shared_state = None
+    server = None
+    if args.web:
+        from web.shared_state import SharedState
+        from web.server import start_server
+        shared_state = SharedState()
+        server, _, url = start_server(shared_state, mapping_engine, port=args.port)
+        print(f"\n🌐 Web UI running at:  {url}")
+        print("   Open that on any device on the same network.\n")
+
+    print(f"Starting in {mode_manager.current_mode} MODE")
+    if not args.web and not headless:
+        print("⌨️ '1' PLAY  '2' EXPRESSION  '3' DJ  |  'r' recalibrate  |  'q' quit")
+    elif not args.web:
+        print("⌨️ Ctrl+C to quit.")
 
     win = "Gesture MIDI Controller"
     fps = 0.0
     last_t = time.time()
     last_print = 0.0
+    running = True
 
     try:
-        while True:
+        while running:
             ret, frame = cam.get_frame()
             if not ret or frame is None:
-                print("⚠️ Failed to grab frame")
-                time.sleep(0.1)
+                time.sleep(0.05)
                 continue
 
+            # --- handle UI commands (web) ---------------------------------
+            if shared_state is not None:
+                for cmd, payload in shared_state.drain_commands():
+                    if cmd == "mode" and payload:
+                        mode_manager.handle_ui_switch(payload)
+                    elif cmd == "quit":
+                        running = False
+                    elif cmd == "recalibrate":
+                        _push_status(shared_state, mode_manager, fps, midi,
+                                     {}, {"controls": []}, calibrating=True)
+                        print("\n🔄 Recalibrating (web request)...")
+                        new_colors = calibrator.calibrate(camera=cam)
+                        calibrator.save_calibration(new_colors)
+                        engine.update_colors(new_colors)
+                        print("✅ Recalibration complete!\n")
+
             gestures = engine.process(frame)
+            mapout = mapping_engine.process_gestures(gestures)
 
-            if gestures and mapping_engine is not None:
-                mapping_engine.process_gestures(gestures)
-
-            # FPS (EMA).
             now = time.time()
             dt = now - last_t
             last_t = now
             if dt > 0:
                 fps = 0.9 * fps + 0.1 * (1.0 / dt)
 
-            if headless:
-                if now - last_print >= 0.2:  # 5 Hz console refresh
+            # --- output ---------------------------------------------------
+            if shared_state is not None:
+                overlay = engine.draw_overlay(
+                    frame, gestures, mode=mode_manager.current_mode, fps=fps)
+                ok, jpg = cv2.imencode(".jpg", overlay,
+                                       [cv2.IMWRITE_JPEG_QUALITY, 70])
+                if ok:
+                    shared_state.set_frame(jpg.tobytes())
+                _push_status(shared_state, mode_manager, fps, midi,
+                             gestures, mapout)
+
+            elif headless:
+                if now - last_print >= 0.2:
                     _print_gesture_line(gestures, mode_manager.current_mode, fps)
                     last_print = now
             else:
                 overlay = engine.draw_overlay(
                     frame, gestures, mode=mode_manager.current_mode, fps=fps)
                 cv2.imshow(win, overlay)
-
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('1'):
                     mode_manager.handle_ui_switch("PLAY")
@@ -123,19 +151,21 @@ def main():
                 elif key == ord('3'):
                     mode_manager.handle_ui_switch("DJ")
                 elif key == ord('r'):
-                    print("\n🔄 Starting recalibration...")
+                    print("\n🔄 Recalibrating...")
                     new_colors = calibrator.calibrate(camera=cam)
                     calibrator.save_calibration(new_colors)
                     engine.update_colors(new_colors)
-                    print("✅ Recalibration complete!\n")
+                    print("✅ Done!\n")
                 elif key == ord('q'):
-                    break
+                    running = False
 
             mode_manager.tick()
 
     except KeyboardInterrupt:
         print("\n🛑 Shutting down...")
     finally:
+        if server is not None:
+            server.shutdown()
         cam.release()
         engine.release()
         calibrator.release()
@@ -143,6 +173,27 @@ def main():
             midi.disconnect()
         if not headless:
             cv2.destroyAllWindows()
+
+
+def _marker_bools(gestures):
+    mk = gestures.get('_markers', {}) if gestures else {}
+    return {name: (mk.get(name) is not None) for name in ("wrist", "thumb", "index")}
+
+
+def _push_status(shared_state, mode_manager, fps, midi, gestures, mapout,
+                 calibrating=False):
+    hand = ("OPEN" if gestures.get('OPEN_PALM')
+            else ("FIST" if gestures.get('FIST') else "—")) if gestures else "—"
+    shared_state.set_status({
+        "mode": mode_manager.current_mode,
+        "fps": round(fps, 1),
+        "hand": hand,
+        "oob": bool(gestures.get('OUT_OF_BOUNDS')) if gestures else False,
+        "markers": _marker_bools(gestures),
+        "midi": (midi.port.name if (midi and midi.port) else None),
+        "calibrating": calibrating,
+        "controls": mapout.get("controls", []),
+    })
 
 
 def _print_gesture_line(gestures, mode, fps):
