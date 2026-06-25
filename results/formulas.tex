@@ -1,0 +1,114 @@
+% =====================================================================
+%  Formulas for the Gesture MIDI Controller paper (methodology section)
+%  Each block is self-contained; paste the ones you need.
+%  Requires: \usepackage{amsmath}
+% =====================================================================
+
+% ---------------------------------------------------------------------
+% 1. HSV colour segmentation (with red hue-wrap)
+% ---------------------------------------------------------------------
+% A pixel p is part of marker m's mask if its HSV value lies within the
+% calibrated lower/upper bounds. OpenCV hue is in [0,179]; red wraps at 0,
+% so its range is expressed as the union of two intervals.
+\begin{equation}
+M_m(p) =
+\begin{cases}
+\mathbf{1}\!\left[\, c^{\text{lo}}_m \preceq \mathrm{HSV}(p) \preceq c^{\text{hi}}_m \,\right],
+  & h^{\text{lo}}_m \le h^{\text{hi}}_m \\[4pt]
+\mathbf{1}\!\left[ \mathrm{HSV}(p) \in R_1 \cup R_2 \right],
+  & h^{\text{lo}}_m > h^{\text{hi}}_m
+\end{cases}
+\label{eq:segmentation}
+\end{equation}
+% where for the wrap case R1 = [0,h^hi] and R2 = [h^lo,179] in hue,
+% sharing the same S,V bounds.
+
+% ---------------------------------------------------------------------
+% 2. Calibration: per-channel HSV bounds from samples
+% ---------------------------------------------------------------------
+% Bounds are mean +/- k.sigma over N sampled pixels, with capped floors
+% on saturation and value for lighting tolerance.
+\begin{align}
+\mu_c &= \tfrac{1}{N}\sum_{i=1}^{N} x_{i,c}, \qquad
+\sigma_c = \sqrt{\tfrac{1}{N}\sum_{i=1}^{N}(x_{i,c}-\mu_c)^2} \\
+h^{\text{lo}} &= \mu_H - 3\sigma_H, \quad h^{\text{hi}} = \mu_H + 3\sigma_H \\
+s^{\text{lo}} &= \mathrm{clip}(\mu_S - 3\sigma_S,\; 30,\; 150) \\
+v^{\text{lo}} &= \mathrm{clip}(\mu_V - 5\sigma_V,\; 20,\; 110)
+\label{eq:calibration}
+\end{align}
+
+% ---------------------------------------------------------------------
+% 3. Marker centroid via image moments
+% ---------------------------------------------------------------------
+% Spatial moments of the (binary) mask give the marker centroid.
+% Fingertips use the largest contour; the wrist loop uses the whole mask.
+\begin{equation}
+M_{ji} = \sum_{x}\sum_{y} x^{j}\, y^{i}\, B(x,y), \qquad
+(\bar{x},\bar{y}) = \left( \frac{M_{10}}{M_{00}},\; \frac{M_{01}}{M_{00}} \right)
+\label{eq:centroid}
+\end{equation}
+
+% ---------------------------------------------------------------------
+% 4. Exponential moving-average (EMA) smoothing
+% ---------------------------------------------------------------------
+% Applied to coordinates, pinch and tilt (alpha=0.3) and to the wrist
+% centroid (alpha=0.4). The step response reaches (1-(1-alpha)^{n+1}).
+\begin{equation}
+s_t = \alpha\, x_t + (1-\alpha)\, s_{t-1}, \qquad \alpha \in (0,1]
+\label{eq:ema}
+\end{equation}
+
+% ---------------------------------------------------------------------
+% 5. Pinch gesture (normalized thumb-index distance)
+% ---------------------------------------------------------------------
+\begin{equation}
+d = \left\lVert (i_x,i_y) - (t_x,t_y) \right\rVert_2, \qquad
+p = \min\!\left(1,\; \max\!\left(0,\; \frac{d}{0.35}\right)\right)
+\label{eq:pinch}
+\end{equation}
+
+% ---------------------------------------------------------------------
+% 6. Tilt (wrist-to-index orientation)
+% ---------------------------------------------------------------------
+\begin{equation}
+\theta = \frac{1}{\pi/2}\,
+\operatorname{atan2}\!\big(i_x - w_x,\; (1-i_y) - (1-w_y)\big),
+\qquad \theta \in [-1,1]
+\label{eq:tilt}
+\end{equation}
+
+% ---------------------------------------------------------------------
+% 7. Gesture -> MIDI mapping (absolute and relative)
+% ---------------------------------------------------------------------
+% Absolute: a normalized gesture g is quantized to a 7-bit CC.
+\begin{equation}
+\mathrm{CC}^{\text{abs}} = \left\lfloor \mathrm{clip}(g,0,1)\cdot 127 \right\rfloor
+\label{eq:abs}
+\end{equation}
+% Relative: a signed per-frame delta is accumulated and clamped (v0 = 64).
+\begin{equation}
+v_t = \mathrm{clip}\!\big(v_{t-1} + \lfloor \delta_t \cdot 254 \rfloor,\; 0,\; 127\big)
+\label{eq:rel}
+\end{equation}
+
+% ---------------------------------------------------------------------
+% 8. End-to-end per-frame latency model
+% ---------------------------------------------------------------------
+\begin{equation}
+T_{\text{frame}} = T_{\text{capture}} + T_{\text{hsv}}
+                 + T_{\text{search}} + T_{\text{map}},
+\qquad
+\mathrm{FPS}_{\max} = \frac{1}{T_{\text{frame}}}
+\label{eq:latency}
+\end{equation}
+
+% ---------------------------------------------------------------------
+% 9. MediaPipe duty cycle (worker runs every N-th frame)
+% ---------------------------------------------------------------------
+% With N=5, MediaPipe touches only 1/N of frames and runs off the hot path,
+% so the amortized per-frame tracking cost is bounded by the HSV path.
+\begin{equation}
+\bar{T}_{\text{track}} \approx T_{\text{hsv+search}}
+   + \tfrac{1}{N}\, T_{\text{MP}}\big|_{\text{(off hot path)}}
+\label{eq:duty}
+\end{equation}

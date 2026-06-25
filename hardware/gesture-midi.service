@@ -1,0 +1,25 @@
+[Unit]
+Description=Gesture MIDI Controller (headless web UI + MIDI)
+# Wait for the network so avahi/mDNS (midi-controller.local) and the web
+# server bind correctly on boot, and for the f_midi gadget so MIDI connects.
+After=network-online.target sound.target usb-midi-gadget.service
+Wants=network-online.target
+Requires=usb-midi-gadget.service
+
+[Service]
+Type=simple
+User=samitha
+Group=samitha
+# Explicit so the service can reach the CSI camera, GPIO, audio/ALSA MIDI,
+# even though the user already belongs to these groups.
+SupplementaryGroups=video audio gpio i2c spi render input dialout
+WorkingDirectory=/home/samitha/Testing
+# libcamerify wraps python so OpenCV's V4L2 path sees the CSI camera.
+ExecStart=/usr/bin/libcamerify /home/samitha/Testing/venv311/bin/python /home/samitha/Testing/main.py --web
+# Restart if it crashes (e.g. camera hiccup) so the demo self-heals.
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

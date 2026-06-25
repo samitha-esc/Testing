@@ -1,0 +1,13 @@
+[Unit]
+Description=USB MIDI gadget (f_midi) for the gesture controller
+# configfs must be mounted first; it lives under /sys/kernel/config.
+After=sys-kernel-config.mount
+Requires=sys-kernel-config.mount
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/home/samitha/setup-gadget.sh
+
+[Install]
+WantedBy=multi-user.target

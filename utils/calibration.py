@@ -171,14 +171,21 @@ class GloveCalibrator:
         std_hsv   = np.std(hsv_array,  axis=0)
 
         # Hue: mean ± 3σ (wider coverage; ROI constrains position anyway).
-        # Saturation lower: floor at 50 to exclude washed-out/gray pixels.
-        # Saturation upper: always 255 — accept any saturation above the floor
-        #   so highly saturated tape is never excluded by an upper S clip.
-        # Value: floor at 40, upper 255.
+        # Saturation/Value lower bounds: the mean-kσ estimate COLLAPSES to ~mean
+        # when the marker is sampled under bright, even light (tiny std). That
+        # produces floors so high (e.g. V>=232) the marker drops out of the mask
+        # the moment the light dims — which is why detection needed very bright
+        # light. Cap the floors so a calibrated marker is still matched in dimmer
+        # / less-saturated conditions:
+        #   - S floor never above 150  → still rejects washed-out gray/skin,
+        #     but no longer demands near-max saturation.
+        #   - V floor never above 110  → V is the brightness axis, so a low cap
+        #     gives wide lighting tolerance. Upper S/V stay 255, so brighter is
+        #     always fine.
         h_lo = float(np.clip(mean_hsv[0] - 3 * std_hsv[0], 0, 179))
         h_hi = float(np.clip(mean_hsv[0] + 3 * std_hsv[0], 0, 179))
-        s_lo = float(np.clip(mean_hsv[1] - 3 * std_hsv[1], 30, 255))
-        v_lo = float(np.clip(mean_hsv[2] - 5 * std_hsv[2], 20, 255))
+        s_lo = float(np.clip(mean_hsv[1] - 3 * std_hsv[1], 30, 150))
+        v_lo = float(np.clip(mean_hsv[2] - 5 * std_hsv[2], 20, 110))
 
         lower = [int(h_lo), int(s_lo), int(v_lo)]
         upper = [int(h_hi), 255, 255]
